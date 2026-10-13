@@ -2,9 +2,16 @@ import datetime
 from unittest import mock
 
 from django.core.exceptions import ImproperlyConfigured
-from django.test import TestCase, override_settings, skipUnlessDBFeature
+from django.http import Http404
+from django.test import (
+    RequestFactory,
+    TestCase,
+    override_settings,
+    skipUnlessDBFeature,
+)
 from django.test.utils import requires_tz_support
 
+from . import views
 from .models import Artist, Author, Book, BookSigning, Page
 
 
@@ -856,12 +863,27 @@ class DateDetailViewTests(TestDataMixin, TestCase):
             "/dates/books/9999/",
             "/dates/books/9999/12/",
             "/dates/books/9999/week/52/",
+            "/dates/books/9999/dec/31/allow_empty/",
+            "/dates/booksignings/9999/dec/31/",
         ]
         for url in urls:
             with self.subTest(url=url):
                 res = self.client.get(url)
                 self.assertEqual(res.status_code, 404)
                 self.assertEqual(res.context["exception"], "Date out of range")
+
+    def test_year_out_of_range_previous(self):
+        request = RequestFactory().get("/")
+        tests = [
+            (views.BookYearArchive, {"year": "0001"}),
+            (views.BookMonthArchive, {"year": "0001", "month": "jan"}),
+            (views.BookWeekArchive, {"year": "0001", "week": "1"}),
+            (views.BookDayArchive, {"year": "0001", "month": "jan", "day": "1"}),
+        ]
+        for view, kwargs in tests:
+            with self.subTest(view=view.__name__):
+                with self.assertRaisesMessage(Http404, "Date out of range"):
+                    view.as_view(allow_empty=True)(request, **kwargs)
 
     def test_invalid_url(self):
         msg = (
