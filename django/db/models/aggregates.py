@@ -77,6 +77,7 @@ class Aggregate(Func):
     contains_aggregate = True
     name = None
     window_compatible = True
+    _window_source = False
     allow_distinct = False
     allow_order_by = False
     empty_result_set_value = None
@@ -130,7 +131,7 @@ class Aggregate(Func):
                     raise FieldError(
                         f"Cannot compute {c.name}('{ref}'): '{ref}' is an aggregate"
                     )
-        elif not self.is_summary:
+        elif not self.is_summary and not self._window_source:
             # Call Aggregate.get_source_expressions() to avoid
             # returning self.filter and including that in this loop.
             expressions = super(Aggregate, c).get_source_expressions()

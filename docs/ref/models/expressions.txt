@@ -885,6 +885,45 @@ the same studio in the same genre and release year:
 
 This allows you to check if a movie is rated better or worse than its peers.
 
+An aggregate function used as the ``expression`` can be applied to another
+aggregate, in which case the query is grouped. The inner aggregate is computed
+for each group and the outer one over the window of the resulting rows. Only
+one level of nesting is supported. For example, to annotate each studio with
+its number of movies and the total number of movies:
+
+.. code-block:: pycon
+
+    >>> from django.db.models import Count, Sum, Window
+    >>> Movie.objects.values("studio").annotate(
+    ...     movies=Count("pk"),
+    ...     total=Window(expression=Sum(Count("pk"))),
+    ... )
+
+The SQL looks like:
+
+.. code-block:: sql
+
+    SELECT
+        "movie"."studio_id" AS "studio",
+        COUNT("movie"."id") AS "movies",
+        SUM(COUNT("movie"."id")) OVER () AS "total"
+    FROM "movie"
+    GROUP BY 1
+
+Fields referenced by ``partition_by`` and ``order_by`` are added to the
+``GROUP BY`` clause, in the same way as fields referenced by
+:meth:`~django.db.models.query.QuerySet.order_by` are, so they should usually
+be part of the preceding ``values()`` call or be aggregates themselves. Using
+such a window expression directly in ``order_by()`` requires the query to
+already be grouped.
+
+.. versionchanged:: 6.2
+
+    Support for nesting an aggregate function in the aggregate function of a
+    window expression was added. A window expression using an aggregate in
+    the arguments of a window function, ``partition_by``, or ``order_by`` now
+    also groups the query.
+
 You may want to apply multiple expressions over the same window, i.e., the
 same partition and frame. For example, you could modify the previous example
 to also include the best and worst rating in each movie's group (same studio,

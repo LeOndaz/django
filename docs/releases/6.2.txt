@@ -209,7 +209,11 @@ Migrations
 Models
 ~~~~~~
 
-* ...
+* :class:`~django.db.models.expressions.Window` expressions now support an
+  aggregate function applied to another aggregate, for example
+  ``Window(Sum(Count("pk")))``. A window expression using an aggregate in
+  the arguments of a window function, ``partition_by``, or ``order_by`` now
+  also groups the query.
 
 Requests and Responses
 ~~~~~~~~~~~~~~~~~~~~~~

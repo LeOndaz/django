@@ -1673,6 +1673,289 @@ class WindowFunctionTests(TestCase):
             ),
         )
 
+    def test_nested_aggregate(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(count=Count("pk"), total=Window(Sum(Count("pk"))))
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "count", "total"),
+            [
+                ("Accounting", 4, 12),
+                ("IT", 2, 12),
+                ("Management", 2, 12),
+                ("Marketing", 2, 12),
+                ("Sales", 2, 12),
+            ],
+        )
+
+    def test_nested_aggregate_annotation_reference(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(count=Count("pk"))
+            .annotate(total=Window(Sum("count")))
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "count", "total"),
+            [
+                ("Accounting", 4, 12),
+                ("IT", 2, 12),
+                ("Management", 2, 12),
+                ("Marketing", 2, 12),
+                ("Sales", 2, 12),
+            ],
+        )
+
+    def test_nested_aggregate_partition_by(self):
+        qs = (
+            Employee.objects.values("department", "age")
+            .annotate(
+                count=Count("pk"),
+                total=Window(Sum(Count("pk")), partition_by=F("department")),
+            )
+            .order_by("department", "age")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "age", "count", "total"),
+            [
+                ("Accounting", 20, 3, 4),
+                ("Accounting", 50, 1, 4),
+                ("IT", 40, 2, 2),
+                ("Management", 40, 1, 2),
+                ("Management", 50, 1, 2),
+                ("Marketing", 20, 1, 2),
+                ("Marketing", 30, 1, 2),
+                ("Sales", 30, 2, 2),
+            ],
+        )
+
+    def test_nested_aggregate_group_by(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(total=Window(Sum(Sum("salary")), order_by="department"))
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "total"),
+            [
+                ("Accounting", 177000),
+                ("IT", 271000),
+                ("Management", 451000),
+                ("Marketing", 529000),
+                ("Sales", 637000),
+            ],
+        )
+
+    def test_nested_aggregate_filter(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(total=Window(Sum(Sum("salary")), order_by="department"))
+            .filter(total__gt=300000)
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "total"),
+            [
+                ("Management", 451000),
+                ("Marketing", 529000),
+                ("Sales", 637000),
+            ],
+        )
+
+    def test_nested_aggregate_aggregate(self):
+        qs = Employee.objects.values("department").annotate(
+            total=Window(Sum(Sum("salary")), order_by="department")
+        )
+        self.assertEqual(qs.aggregate(Max("total")), {"total__max": 637000})
+
+    def test_nested_aggregate_window_function(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(previous=Window(Lag(Sum("salary")), order_by="department"))
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "previous"),
+            [
+                ("Accounting", None),
+                ("IT", 177000),
+                ("Management", 94000),
+                ("Marketing", 180000),
+                ("Sales", 78000),
+            ],
+        )
+
+    def test_aggregate_order_by_group_by(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(rank=Window(Rank(), order_by=Sum("salary").desc()))
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "rank"),
+            [
+                ("Accounting", 2),
+                ("IT", 4),
+                ("Management", 1),
+                ("Marketing", 5),
+                ("Sales", 3),
+            ],
+        )
+
+    def test_nested_aggregate_filter_argument(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(
+                total=Window(
+                    Sum(Count("pk"), filter=Q(department__startswith="M")),
+                )
+            )
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "total"),
+            [
+                ("Accounting", 4),
+                ("IT", 4),
+                ("Management", 4),
+                ("Marketing", 4),
+                ("Sales", 4),
+            ],
+        )
+
+    def test_nested_aggregate_without_values(self):
+        qs = Employee.objects.annotate(
+            past=Count("past_departments"),
+            total=Window(Sum(Count("past_departments"))),
+        ).order_by("-past", "name")
+        self.assertSequenceEqual(
+            qs.values_list("name", "past", "total")[:3],
+            [("Johnson", 1, 2), ("Miller", 1, 2), ("Adams", 0, 2)],
+        )
+
+    def test_nested_aggregate_subquery(self):
+        departments = (
+            Employee.objects.values("department")
+            .annotate(total=Window(Sum(Sum("salary")), order_by="department"))
+            .filter(total__gt=300000)
+            .values("department")
+        )
+        self.assertEqual(Employee.objects.filter(department__in=departments).count(), 6)
+
+    def test_nested_aggregate_order_by(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(count=Count("pk"))
+            .order_by(Window(Sum(Count("pk")), order_by="department").desc())
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", flat=True),
+            ["Sales", "Marketing", "Management", "IT", "Accounting"],
+        )
+
+    def test_nested_aggregate_partition_by_ungrouped(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(total=Window(Sum(Count("pk")), partition_by=F("age")))
+            .order_by("department", "total")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "total"),
+            [
+                ("Accounting", 2),
+                ("Accounting", 4),
+                ("IT", 3),
+                ("Management", 2),
+                ("Management", 3),
+                ("Marketing", 3),
+                ("Marketing", 4),
+                ("Sales", 3),
+            ],
+        )
+
+    def test_nested_aggregate_order_by_ungrouped(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(total=Window(Sum(Count("pk")), order_by="age"))
+            .order_by("department", "total")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "total"),
+            [
+                ("Accounting", 4),
+                ("Accounting", 12),
+                ("IT", 10),
+                ("Management", 10),
+                ("Management", 12),
+                ("Marketing", 4),
+                ("Marketing", 7),
+                ("Sales", 7),
+            ],
+        )
+
+    def test_nested_aggregate_reused_expression(self):
+        aggregate = Sum(Count("pk"))
+        window = Window(aggregate)
+        qs = Employee.objects.values("department").annotate(total=window)
+        self.assertEqual(len(qs), 5)
+        self.assertIs(window.contains_aggregate, False)
+        self.assertEqual(len(qs.annotate(other=window)), 5)
+        msg = "Cannot compute Sum('Count'): 'Count' is an aggregate"
+        with self.assertRaisesMessage(FieldError, msg):
+            qs.annotate(other=aggregate)
+
+    def test_aggregate_default_group_by_unchanged(self):
+        qs = Employee.objects.annotate(total=Window(Sum("salary", default=0)))
+        self.assertNotIn("GROUP BY", str(qs.query))
+
+    def test_aggregate_partition_by_group_by(self):
+        qs = (
+            Employee.objects.values("department")
+            .annotate(
+                row=Window(RowNumber(), partition_by=Count("pk"), order_by="department")
+            )
+            .order_by("department")
+        )
+        self.assertSequenceEqual(
+            qs.values_list("department", "row"),
+            [
+                ("Accounting", 1),
+                ("IT", 1),
+                ("Management", 2),
+                ("Marketing", 3),
+                ("Sales", 4),
+            ],
+        )
+
+    def test_aggregate_group_by_unchanged(self):
+        qs = Employee.objects.annotate(
+            total=Window(Sum("salary"), partition_by="department")
+        )
+        self.assertNotIn("GROUP BY", str(qs.query))
+        self.assertEqual(len(qs), 12)
+
+    def test_window_not_aggregate_expression(self):
+        msg = "total is not an aggregate expression"
+        tests = [
+            Window(Sum(Count("pk"))),
+            Window(Sum(Count("pk")), partition_by="department"),
+            Window(Rank(), order_by=Sum("salary").desc()),
+        ]
+        for window in tests:
+            with self.subTest(window=window):
+                with self.assertRaisesMessage(TypeError, msg):
+                    Employee.objects.aggregate(total=window)
+
+    def test_multiple_nested_aggregates(self):
+        msg = "Cannot compute Count('Max'): 'Max' is an aggregate"
+        with self.assertRaisesMessage(FieldError, msg):
+            Employee.objects.annotate(total=Window(Sum(Count(Max("salary")))))
+        msg = "Cannot compute Sum('Count'): 'Count' is an aggregate"
+        with self.assertRaisesMessage(FieldError, msg):
+            Employee.objects.annotate(total=Window(Lag(Sum(Count("pk")))))
+
     @skipUnlessDBFeature("can_distinct_on_fields")
     def test_distinct_window_function(self):
         """

@@ -2021,7 +2021,8 @@ class Window(SQLiteNumericMixin, Expression):
     template = "%(expression)s OVER (%(window)s)"
     # Although the main expression may either be an aggregate or an
     # expression with an aggregate function, the GROUP BY that will
-    # be introduced in the query as a result is not desired.
+    # be introduced in the query as a result is not desired unless it
+    # contains another aggregate once resolved.
     contains_aggregate = False
     contains_over_clause = True
 
@@ -2054,6 +2055,30 @@ class Window(SQLiteNumericMixin, Expression):
 
     def _resolve_output_field(self):
         return self.source_expression.output_field
+
+    def resolve_expression(
+        self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False
+    ):
+        from django.db.models.aggregates import Aggregate
+
+        c = self.copy()
+        is_aggregate = isinstance(c.source_expression, Aggregate)
+        if is_aggregate:
+            c.source_expression = c.source_expression.copy()
+            c.source_expression._window_source = True
+        c = super(Window, c).resolve_expression(
+            query, allow_joins, reuse, summarize, for_save
+        )
+        nested = [c.source_expression]
+        if is_aggregate:
+            if not isinstance(nested[0], Aggregate):
+                nested = nested[0].get_source_expressions()[:1]
+            nested = nested[0].get_source_expressions()
+        c.contains_aggregate = not summarize and any(
+            expr and expr.contains_aggregate
+            for expr in (*nested, c.partition_by, c.order_by)
+        )
+        return c
 
     def get_source_expressions(self):
         return [self.source_expression, self.partition_by, self.order_by, self.frame]
